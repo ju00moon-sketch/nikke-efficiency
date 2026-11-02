@@ -52,6 +52,8 @@ let visibleRows = [];
 const openComparisonRows = new Set();
 const comparisonSlots = [null, null];
 let valueListOpen = null;
+const stepupOpenYears = new Set();
+let stepupYearsInitialized = false;
 const isComparison = () => activePage === 'efficiency' || activePage === 'compare';
 
 function text(tag, value, className = '') {
@@ -340,7 +342,7 @@ function packageMetric(label, value, className = '') {
   return metric;
 }
 
-function packageCard(sheet, row) {
+function packageCard(sheet, row, cumulativePrice = null) {
   const [number, folded, cells] = row;
   const byColumn = new Map(cells.map(cell => [colFromAddress(cell[0]), cell]));
   const name = String(valueAt(sheet.name, row, 'D'));
@@ -364,6 +366,7 @@ function packageCard(sheet, row) {
   const composition = packageValue(sheet, row, 'E');
   if (composition !== '—') card.append(header, metrics, text('p', composition, 'package-composition'));
   else card.append(header, metrics);
+  if (cumulativePrice != null) card.append(text('p', `이 단계까지 누적 결제 ${formatValue(cumulativePrice, '[$₩-412]#,##0')} · 원본 스텝업 탭 기준`, 'stepup-cumulative'));
   const compare = document.createElement('label');
   compare.className = 'compare-picker';
   const check = document.createElement('input');
@@ -422,8 +425,68 @@ function renderCategoryFilters(sheet) {
     const button = text('button', `${label} ${count}`, 'category-chip');
     button.type = 'button';
     button.setAttribute('aria-pressed', String(category === key));
-    button.addEventListener('click', () => { category = key; renderSheet(); });
+    button.addEventListener('click', () => { category = key; if (key === 'step') { sortColumn = ''; direction = 1; } renderSheet(); });
     panel.append(button);
+  }
+}
+
+function stepNumber(sheet, row) {
+  return Number(String(valueAt(sheet.name, row, 'D') ?? '').match(/STEP\s*(\d+)/i)?.[1] ?? 0);
+}
+
+function stepupReferenceRows(sheet) {
+  const reference = sheetData('스텝업');
+  const matches = new Map();
+  for (const row of reference.rows) {
+    const step = stepNumber(reference, row);
+    if (!step) continue;
+    const price = valueAt(reference.name, row, 'E');
+    const efficiency = valueAt(reference.name, row, 'G');
+    const found = sheet.rows.find(candidate => stepNumber(sheet, candidate) === step
+      && valueAt(sheet.name, candidate, 'F') === price
+      && Math.abs(valueAt(sheet.name, candidate, 'I') - efficiency) < 1e-7);
+    if (found) matches.set(found[0], valueAt(reference.name, row, 'F'));
+  }
+  return matches;
+}
+
+function renderStepupPanel() {
+  const panel = $('#stepup-panel');
+  panel.replaceChildren();
+  if (!isComparison() || category !== 'step') return;
+  const periods = timelineEntries(workbook, sheetData('이벤트일정'))
+    .filter(item => item.category === '패키지' && /^스텝업 패키지/.test(String(item.value)))
+    .sort((a, b) => b.start.localeCompare(a.start));
+  const heading = text('h3', `원본 일정의 스텝업 패키지 기간 · ${periods.length}건`);
+  panel.append(heading, text('p', '아래 날짜는 이벤트일정 탭에 기록된 시작일과 마지막 날짜입니다. 각 STEP 상품 행과 기간의 연결은 원본에 없어 임의로 배정하지 않았습니다. 현재 판매 여부도 확인되지 않았습니다.', 'stepup-explanation'));
+  if (!stepupYearsInitialized && periods.length) {
+    stepupOpenYears.add(Number(periods[0].start.slice(0, 4)));
+    stepupYearsInitialized = true;
+  }
+  const years = new Map();
+  for (const period of periods) {
+    const year = Number(period.start.slice(0, 4));
+    if (!years.has(year)) years.set(year, []);
+    years.get(year).push(period);
+  }
+  for (const [year, entries] of years) {
+    const details = document.createElement('details');
+    details.className = 'stepup-year';
+    details.open = stepupOpenYears.has(year);
+    details.addEventListener('toggle', () => {
+      if (!details.isConnected) return;
+      if (details.open) stepupOpenYears.add(year); else stepupOpenYears.delete(year);
+    });
+    details.append(text('summary', `${year}년 · ${entries.length}건`));
+    const list = document.createElement('ul');
+    list.className = 'stepup-periods';
+    for (const item of entries) {
+      const entry = document.createElement('li');
+      entry.append(text('strong', `${item.start} ~ ${item.end}`), text('span', `${item.value} · 이벤트일정 ${item.address}`));
+      list.append(entry);
+    }
+    details.append(list);
+    panel.append(details);
   }
 }
 
@@ -473,10 +536,40 @@ function renderComparisonPanel(sheet) {
 
 function renderPackageComparison(sheet) {
   const sort = $('#sort-column');
-  sort.replaceChildren(...[['', '원본 순서'], ['D', '상품명'], ['F', '가격'], ['I', '효율'], ['PICKUP_COST', '픽업 1회 단가']].map(([value, label]) => new Option(label, value)));
+  const isStepup = category === 'step';
+  sort.replaceChildren(...(isStepup ? [['', '묶음별 STEP 순서']] : [['', '원본 순서'], ['D', '상품명'], ['F', '가격'], ['I', '효율'], ['PICKUP_COST', '픽업 1회 단가']]).map(([value, label]) => new Option(label, value)));
   sort.value = sortColumn;
+  sort.disabled = isStepup;
+  $('#sort-direction').disabled = isStepup;
   const matchesCategory = CATEGORIES.find(([key]) => key === category)?.[2] ?? CATEGORIES[0][2];
   visibleRows = standardRows(sheet).filter(row => row[0] >= 6 && typeof valueAt(sheet.name, row, 'D') === 'string' && typeof valueAt(sheet.name, row, 'F') === 'number' && matchesCategory(valueAt(sheet.name, row, 'D')));
+  if (isStepup) {
+    const reference = stepupReferenceRows(sheet);
+    const byStep = (a, b) => stepNumber(sheet, a) - stepNumber(sheet, b) || a[0] - b[0];
+    const currentRows = visibleRows.filter(row => reference.has(row[0])).sort(byStep);
+    const otherRows = visibleRows.filter(row => !reference.has(row[0])).sort(byStep);
+    visibleRows = [...currentRows, ...otherRows];
+    const groups = document.createElement('div');
+    groups.className = 'stepup-product-groups';
+    for (const [title, note, rows] of [
+      ['스텝업 탭에 정리된 구성', '원본 스텝업 탭과 단계·가격·효율이 일치하는 5개 상품입니다. 각 카드의 가격은 해당 STEP 단일 가격, 누적 결제는 그 단계까지의 합계입니다. 판매기간 연결은 확인되지 않았습니다.', currentRows],
+      ['패키지효율 탭의 다른 구성', '같은 STEP 이름이라도 구성품과 원본 행이 다릅니다. 판매기간은 확인되지 않아 날짜별 일정에 배정하지 않았습니다.', otherRows]
+    ]) {
+      if (!rows.length) continue;
+      const section = document.createElement('section');
+      section.className = 'stepup-product-group';
+      section.append(text('h3', `${title} · ${rows.length}개`), text('p', note, 'stepup-group-note'));
+      const cards = document.createElement('div');
+      cards.className = 'package-list';
+      cards.setAttribute('role', 'list');
+      for (const row of rows) cards.append(packageCard(sheet, row, reference.get(row[0])));
+      section.append(cards);
+      groups.append(section);
+    }
+    showTable(groups, '개', '상품');
+    $('#legend').textContent = legendText(sheet);
+    return;
+  }
   const list = document.createElement('div');
   list.className = 'package-list';
   list.setAttribute('role', 'list');
@@ -488,6 +581,8 @@ function renderPackageComparison(sheet) {
 
 function renderStandard(sheet) {
   if (isComparison()) return renderPackageComparison(sheet);
+  $('#sort-column').disabled = false;
+  $('#sort-direction').disabled = false;
   const columns = columnsFor(sheet);
   const labels = new Map(columns.map(column => [column, columnLabel(sheet, column)]));
   const sort = $('#sort-column');
@@ -608,6 +703,7 @@ function renderSheet(resetLimit = true) {
   $('#compare-panel').hidden = activePage !== 'compare';
   $('#toolbar').hidden = activePage === 'values';
   $('#category-filter').hidden = !isComparison();
+  $('#stepup-panel').hidden = !isComparison() || category !== 'step';
   $('#list-heading').hidden = activePage === 'values';
   $('#legend-details').hidden = activePage === 'values';
   $('#table-area').hidden = activePage === 'values';
@@ -629,6 +725,7 @@ function renderSheet(resetLimit = true) {
   renderValueTools();
   if (activePage === 'values') return;
   if (isComparison()) renderCategoryFilters(sheet);
+  renderStepupPanel();
   if (activePage === 'compare') renderComparisonPanel(sheet);
   if (current === '이벤트일정') renderEvents(sheet); else renderStandard(sheet);
 }
