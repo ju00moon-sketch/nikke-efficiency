@@ -4,8 +4,9 @@ import { cellFormat, formatValue, inputFor, pickupConversion, rowTier, tierAt, t
 
 const $ = selector => document.querySelector(selector);
 const STORAGE_KEY = 'nikke-values-v1';
+const THEME_KEY = 'nikke-theme-v1';
 const PAGE = 150;
-const COMPARISON_PAGE = 40;
+const COMPARISON_PAGE = 20;
 const groups = [
   ['기준 · 모집', ['재화가치기준', '패키지효율', '픽업효율', 'AFFECTION TRAIL', '뽑기효율']],
   ['재화 · 패키지', ['코더', '스킬칩', '모듈', '유료쥬얼', '스텝업', '커스텀', '월정액', '코스튬뽑기(4주년)']],
@@ -37,11 +38,21 @@ const SETTINGS = [
   ['E6', '재화가치 1당 가격(원)']
 ];
 const EVENT_SORTS = [['', '원본 순서'], ['start', '시작일'], ['end', '종료일'], ['days', '기간'], ['category', '구분'], ['text', '내용']];
+const CATEGORIES = [
+  ['all', '전체', () => true],
+  ['monthly', '월간·30일', name => /월간|30일|월정액/.test(name)],
+  ['step', '스텝업', name => /스텝업|STEP/i.test(name)],
+  ['new', '신입·복귀', name => /신입|복귀/.test(name)],
+  ['anniversary', '주년', name => /주년|ANNIVERSARY|4TH/i.test(name)],
+  ['popup', '팝업', name => /팝업/.test(name)]
+];
 
-let manifest, workbook, current = '패키지효율', search = '', sortColumn = '', direction = 1, showHidden = true, limit = COMPARISON_PAGE, comparisonMode = true;
+let manifest, workbook, current = '패키지효율', activePage = 'efficiency', category = 'all', search = '', sortColumn = '', direction = 1, showHidden = true, limit = COMPARISON_PAGE;
 let visibleRows = [];
 const openComparisonRows = new Set();
-const isComparison = () => current === '패키지효율' && comparisonMode;
+const comparisonSlots = [null, null];
+let valueListOpen = null;
+const isComparison = () => activePage === 'efficiency' || activePage === 'compare';
 
 function text(tag, value, className = '') {
   const el = document.createElement(tag);
@@ -61,41 +72,49 @@ function saveOverrides() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(workbook.overrides))); } catch { /* private mode: edits last for this visit only */ }
 }
 
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('#theme-toggle').textContent = theme === 'dark' ? '라이트 모드' : '다크 모드';
+  $('#theme-toggle').setAttribute('aria-label', theme === 'dark' ? '라이트 모드 켜기' : '다크 모드 켜기');
+  document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#131820' : '#f5f6f8';
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* temporary theme */ }
+}
+
 function renderTabs() {
-  const nav = $('#tabs');
   const picker = $('#sheet-picker');
-  nav.replaceChildren();
   picker.replaceChildren();
   for (const [group, names] of groups) {
-    nav.append(text('div', group, 'tab-group'));
     const options = document.createElement('optgroup');
     options.label = group;
-    for (const name of names) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `tab${name === current ? ' active' : ''}`;
-      if (name === current) button.setAttribute('aria-current', 'page');
-      button.append(text('span', name), text('small', sheetInfo(name).rowCount));
-      button.addEventListener('click', () => chooseTab(name));
-      nav.append(button);
-      options.append(new Option(name, name));
-    }
+    for (const name of names) options.append(new Option(name, name));
     picker.append(options);
   }
   picker.value = current;
-  if (window.matchMedia('(min-width: 861px)').matches) nav.querySelector('.active').scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 
 function chooseTab(name) {
   current = name;
-  comparisonMode = true;
+  activePage = 'source';
   search = '';
   sortColumn = name === '이벤트일정' ? 'start' : '';
   direction = name === '이벤트일정' ? -1 : 1;
   $('#search').value = '';
   renderTabs();
   renderSheet();
-  if (window.matchMedia('(max-width: 860px)').matches) $('#workspace').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+  $('#workspace').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+}
+
+function choosePage(page) {
+  activePage = page;
+  if (page === 'efficiency' || page === 'compare') current = '패키지효율';
+  if (page === 'values') current = '재화가치기준';
+  search = '';
+  sortColumn = page === 'source' && current === '이벤트일정' ? 'start' : '';
+  direction = page === 'source' && current === '이벤트일정' ? -1 : 1;
+  $('#search').value = '';
+  renderTabs();
+  renderSheet();
+  $('#workspace').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
 }
 
 function columnsFor(sheet) {
@@ -345,6 +364,20 @@ function packageCard(sheet, row) {
   const composition = packageValue(sheet, row, 'E');
   if (composition !== '—') card.append(header, metrics, text('p', composition, 'package-composition'));
   else card.append(header, metrics);
+  const compare = document.createElement('label');
+  compare.className = 'compare-picker';
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.checked = comparisonSlots.includes(number);
+  check.disabled = !check.checked && comparisonSlots.every(Boolean);
+  check.setAttribute('aria-label', `${name} 비교 대상`);
+  check.addEventListener('change', () => {
+    if (check.checked) comparisonSlots[comparisonSlots.indexOf(null)] = number;
+    else comparisonSlots[comparisonSlots.indexOf(number)] = null;
+    renderSheet(false);
+  });
+  compare.append(check, text('span', check.checked ? '비교 대상에 담김' : '비교 대상에 담기'));
+  card.append(compare);
   const details = document.createElement('details');
   details.className = 'package-detail';
   details.open = openComparisonRows.has(number);
@@ -376,11 +409,74 @@ function packageCard(sheet, row) {
   return card;
 }
 
+function productRows(sheet) {
+  return sheet.rows.filter(row => row[0] >= 6 && typeof valueAt(sheet.name, row, 'D') === 'string' && typeof valueAt(sheet.name, row, 'F') === 'number');
+}
+
+function renderCategoryFilters(sheet) {
+  const panel = $('#category-filter');
+  panel.replaceChildren(text('span', '상품명 기준 분류', 'filter-label'));
+  const rows = productRows(sheet);
+  for (const [key, label, matches] of CATEGORIES) {
+    const count = rows.filter(row => matches(valueAt(sheet.name, row, 'D'))).length;
+    const button = text('button', `${label} ${count}`, 'category-chip');
+    button.type = 'button';
+    button.setAttribute('aria-pressed', String(category === key));
+    button.addEventListener('click', () => { category = key; renderSheet(); });
+    panel.append(button);
+  }
+}
+
+function renderComparisonPanel(sheet) {
+  const panel = $('#compare-panel');
+  panel.replaceChildren(text('p', '같은 재화 가치 기준으로 두 상품을 비교합니다. 아래 상품 목록에서 비교 대상을 고르거나 선택창을 사용하세요.', 'compare-help'));
+  const rows = productRows(sheet);
+  const choices = document.createElement('div');
+  choices.className = 'compare-choices';
+  for (let slot = 0; slot < 2; slot++) {
+    const field = document.createElement('label');
+    field.append(text('span', `비교 상품 ${slot + 1}`));
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', `비교 상품 ${slot + 1}`);
+    select.add(new Option('상품을 선택하세요', ''));
+    for (const row of rows) select.add(new Option(`${valueAt(sheet.name, row, 'D')} · ${row[0]}행`, String(row[0])));
+    select.value = comparisonSlots[slot] == null ? '' : String(comparisonSlots[slot]);
+    select.addEventListener('change', () => {
+      const next = select.value ? Number(select.value) : null;
+      const other = 1 - slot;
+      if (next != null && comparisonSlots[other] === next) comparisonSlots[other] = null;
+      comparisonSlots[slot] = next;
+      renderSheet(false);
+    });
+    field.append(select);
+    choices.append(field);
+  }
+  panel.append(choices);
+  const results = document.createElement('div');
+  results.className = 'compare-results';
+  for (let slot = 0; slot < 2; slot++) {
+    const row = rows.find(item => item[0] === comparisonSlots[slot]);
+    const result = document.createElement('div');
+    result.className = 'compare-result';
+    if (!row) result.append(text('p', `비교 상품 ${slot + 1}을 선택하세요.`, 'compare-empty'));
+    else {
+      result.append(text('small', `비교 상품 ${slot + 1} · 원본 ${row[0]}행`), text('h3', valueAt(sheet.name, row, 'D')));
+      const metrics = document.createElement('div');
+      metrics.className = 'compare-result-metrics';
+      for (const [column, label] of [['F', '가격'], ['I', '전체 재화 효율'], ['PICKUP_PULLS', '픽업 환산 횟수'], ['PICKUP_COST', '픽업 1회 단가']]) metrics.append(packageMetric(label, packageValue(sheet, row, column)));
+      result.append(metrics, text('p', packageValue(sheet, row, 'E'), 'compare-composition'));
+    }
+    results.append(result);
+  }
+  panel.append(results, text('p', '픽업 환산은 쥬얼 ÷ 300 + 고급 모집권으로 계산하며 일반 모집권은 합산하지 않습니다. 판매 여부는 확인되지 않았습니다.', 'compare-footnote'));
+}
+
 function renderPackageComparison(sheet) {
   const sort = $('#sort-column');
   sort.replaceChildren(...[['', '원본 순서'], ['D', '상품명'], ['F', '가격'], ['I', '효율'], ['PICKUP_COST', '픽업 1회 단가']].map(([value, label]) => new Option(label, value)));
   sort.value = sortColumn;
-  visibleRows = standardRows(sheet).filter(row => row[0] >= 6 && typeof valueAt(sheet.name, row, 'D') === 'string' && typeof valueAt(sheet.name, row, 'F') === 'number');
+  const matchesCategory = CATEGORIES.find(([key]) => key === category)?.[2] ?? CATEGORIES[0][2];
+  visibleRows = standardRows(sheet).filter(row => row[0] >= 6 && typeof valueAt(sheet.name, row, 'D') === 'string' && typeof valueAt(sheet.name, row, 'F') === 'number' && matchesCategory(valueAt(sheet.name, row, 'D')));
   const list = document.createElement('div');
   list.className = 'package-list';
   list.setAttribute('role', 'list');
@@ -457,7 +553,7 @@ function valueItem(sheet, address, label) {
 function renderValueTools() {
   const target = $('#value-tools');
   target.replaceChildren();
-  if (current !== '재화가치기준') return;
+  if (activePage !== 'values') return;
   const sheet = sheetData(current);
   const panel = document.createElement('section');
   panel.className = 'value-panel';
@@ -475,7 +571,8 @@ function renderValueTools() {
   }
   const list = document.createElement('details');
   list.className = 'value-list';
-  list.open = window.matchMedia('(min-width: 861px)').matches;
+  list.open = valueListOpen ?? window.matchMedia('(min-width: 861px)').matches;
+  list.addEventListener('toggle', () => { if (list.isConnected) valueListOpen = list.open; });
   list.append(text('summary', `재화별 가치 ${values.childElementCount}개`), values);
   panel.append(text('h3', '내 기준값'), text('p', '값을 바꾸면 모든 탭의 계산에 바로 반영되고 이 브라우저에만 저장됩니다.'), settings, list);
   target.append(panel);
@@ -500,18 +597,39 @@ function renderOverrideNotice() {
 function renderSheet(resetLimit = true) {
   if (resetLimit) limit = isComparison() ? COMPARISON_PAGE : PAGE;
   const sheet = sheetData(current), info = sheetInfo(current);
-  $('#view-switch').hidden = current !== '패키지효율';
-  $('#view-compare').setAttribute('aria-pressed', String(isComparison()));
-  $('#view-original').setAttribute('aria-pressed', String(current === '패키지효율' && !comparisonMode));
+  for (const button of document.querySelectorAll('.primary-nav [data-page]')) {
+    if (button.dataset.page === activePage) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+  const compareCount = comparisonSlots.filter(Boolean).length;
+  $('#compare-count').hidden = compareCount === 0;
+  $('#compare-count').textContent = compareCount;
+  $('#source-tools').hidden = activePage !== 'source';
+  $('#compare-panel').hidden = activePage !== 'compare';
+  $('#toolbar').hidden = activePage === 'values';
+  $('#category-filter').hidden = !isComparison();
+  $('#list-heading').hidden = activePage === 'values';
+  $('#legend-details').hidden = activePage === 'values';
+  $('#table-area').hidden = activePage === 'values';
+  $('#table-footer').hidden = activePage === 'values';
   $('#table-area').classList.toggle('comparison-area', isComparison());
-  $('#section-title').textContent = current;
-  $('#section-description').textContent = descriptions[current] || '원본 공개 자료의 상품 구성과 계산 결과를 검색하고 정렬해서 볼 수 있습니다.';
-  $('#section-kicker').textContent = groups.find(([, names]) => names.includes(current))[0];
+  $('#section-title').textContent = { efficiency: '패키지 효율표', compare: '두 상품 비교', values: '재화 가치 설정', source: current }[activePage];
+  $('#section-description').textContent = {
+    efficiency: '상품명, 가격과 전체 재화 효율을 한눈에 보고 구성품과 구매 설정을 펼쳐 볼 수 있습니다.',
+    compare: '두 상품의 가격, 효율과 픽업 환산을 같은 기준으로 나란히 확인합니다.',
+    values: '재화 가치를 바꾸면 효율표와 비교 결과가 즉시 다시 계산됩니다.',
+    source: descriptions[current] || '공개 원본 탭의 행과 열, 계산 결과를 그대로 볼 수 있습니다.'
+  }[activePage];
+  $('#section-kicker').textContent = activePage === 'source' ? groups.find(([, names]) => names.includes(current))[0] : '2026.11.02 원본 기준';
   $('#sheet-count').textContent = `${info.rowCount.toLocaleString('ko-KR')}행 · ${info.cellCount.toLocaleString('ko-KR')}셀`;
   $('#sort-direction').textContent = direction === 1 ? '오름차순 ↑' : '내림차순 ↓';
   $('#hidden-wrap').hidden = !info.hiddenRowCount;
+  $('#list-note').textContent = isComparison() ? '판매 여부 미확인 · 상품명 기준 분류' : '원본 스냅샷 · 자동 갱신 없음';
   renderOverrideNotice();
   renderValueTools();
+  if (activePage === 'values') return;
+  if (isComparison()) renderCategoryFilters(sheet);
+  if (activePage === 'compare') renderComparisonPanel(sheet);
   if (current === '이벤트일정') renderEvents(sheet); else renderStandard(sheet);
 }
 
@@ -540,6 +658,7 @@ function downloadCsv() {
 }
 
 async function start() {
+  try { setTheme(localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light'); } catch { setTheme('light'); }
   manifest = await fetch('./snapshot/manifest.json').then(response => { if (!response.ok) throw new Error('목록을 불러올 수 없습니다.'); return response.json(); });
   const sheets = await Promise.all(manifest.sheets.map(async info => {
     const response = await fetch(`./snapshot/${info.file}`);
@@ -557,12 +676,11 @@ async function start() {
   $('#stat-tabs').textContent = visible.length;
   $('#stat-rows').textContent = visible.reduce((n, item) => n + item.rowCount, 0).toLocaleString('ko-KR');
   $('#stat-cells').textContent = visible.reduce((n, item) => n + item.sourceCellCount, 0).toLocaleString('ko-KR');
-  $('#tab-count').textContent = `${visible.length}개 탭`;
   renderTabs();
   renderSheet();
+  document.querySelectorAll('.primary-nav [data-page]').forEach(button => button.addEventListener('click', () => choosePage(button.dataset.page)));
   $('#sheet-picker').addEventListener('change', event => chooseTab(event.target.value));
-  $('#view-compare').addEventListener('click', () => { comparisonMode = true; sortColumn = ''; direction = 1; renderSheet(); });
-  $('#view-original').addEventListener('click', () => { comparisonMode = false; renderSheet(); });
+  $('#theme-toggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
   $('#search').addEventListener('input', event => { search = event.target.value.trim().toLocaleLowerCase(); renderSheet(); });
   $('#sort-column').addEventListener('change', event => { sortColumn = event.target.value; renderSheet(); });
   $('#sort-direction').addEventListener('click', () => { direction *= -1; renderSheet(); });

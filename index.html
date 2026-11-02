@@ -3,41 +3,44 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101116">
-  <meta name="description" content="니케 과금 효율표 공개 자료의 독립적인 2026년 11월 2일 스냅샷. 19개 탭의 상품, 재화 가치, 이벤트와 CD-Keys를 검색하고 비교하세요.">
-  <title>NIKKE 데이터 아카이브 · 과금 효율표</title>
-  <link rel="stylesheet" href="./styles.css?v=readability-1">
-  <script type="module" src="./app.mjs?v=readability-1"></script>
+  <meta name="theme-color" content="#f5f6f8">
+  <meta name="description" content="니케 과금 효율표의 2026년 11월 2일 스냅샷. 상품 가격과 효율을 비교하고 재화 가치를 조정할 수 있습니다.">
+  <title>NIKKE VALUE · 니케 과금 효율표</title>
+  <link rel="stylesheet" href="./styles.css?v=value-2">
+  <script type="module" src="./app.mjs?v=value-2"></script>
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="자료 탭">
-      <div class="brand"><span class="brand-mark">N<span class="brand-dot">·</span></span><span>NIKKE<br><strong>DATA ARCHIVE</strong></span></div>
-      <p class="sidebar-caption">독립 자료실 <span id="tab-count">19개 탭</span></p>
-      <label class="mobile-tab-picker">자료 탭 <select id="sheet-picker" aria-label="자료 탭 선택"></select></label>
-      <nav id="tabs" class="tabs" aria-label="워크북 탭"></nav>
-      <div class="sidebar-foot">2026.11.02 스냅샷<br>수동 확인 자료 · 자동 갱신 없음</div>
-    </aside>
-    <main id="main">
-      <header class="topbar"><div class="mobile-brand">N<span>·</span> DATA ARCHIVE</div><p class="topbar-meta"><span>2026-11-02 스냅샷</span><a class="source-link" href="https://docs.google.com/spreadsheets/d/1qUSwYnpDtWAD_aq_4L6dC6py2vM19WtLed2AGKSdIPk/edit?usp=sharing" target="_blank" rel="noopener noreferrer">원본 자료 ↗</a></p></header>
-      <section class="hero">
-        <div class="eyebrow">비공식 팬 자료 · 2026-11-02 스냅샷</div>
-        <h1>니케 과금 데이터<span class="accent">.</span></h1>
-        <p>원본 스프레드시트의 공개 상품·계산 데이터를 별도 웹페이지에서 볼 수 있게 정리했습니다. 탭을 바꾸고 값을 조정하며 비교할 수 있습니다.</p>
-        <div class="stats"><div><strong id="stat-tabs">19</strong><span>공개 탭</span></div><div><strong id="stat-rows">2,124</strong><span>데이터 행</span></div><div><strong id="stat-cells">21,041</strong><span>원본 셀</span></div></div>
-      </section>
-      <section id="workspace" class="workspace">
-        <div class="section-head"><div><div class="eyebrow" id="section-kicker">기준 · 모집</div><h2 id="section-title" tabindex="-1">자료를 불러오는 중</h2><p id="section-description"></p></div><span id="sheet-count" class="sheet-count"></span></div>
-        <div id="view-switch" class="view-switch" role="group" aria-label="표시 방식" hidden><button id="view-compare" type="button">상품 비교</button><button id="view-original" type="button">원본 표</button></div>
-        <div id="value-tools"></div>
-        <div id="override-notice" class="override-notice" role="status" hidden></div>
-        <div class="toolbar"><label class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="현재 탭에서 검색" aria-label="현재 탭에서 검색"></label><label class="sort-wrap"><span>정렬</span><select id="sort-column" aria-label="정렬할 열"></select></label><button id="sort-direction" class="tool-button" type="button">오름차순 ↑</button><label id="hidden-wrap" class="check-wrap"><input id="show-hidden" type="checkbox" checked> 접힌 행 포함</label><button id="download-csv" class="tool-button" type="button">CSV 저장 ↓</button></div>
-        <details class="legend-details"><summary>계산 기준과 표시 안내</summary><p id="legend" class="legend"></p></details>
-        <div id="table-area" class="table-area"><p class="loading">자료를 불러오는 중입니다…</p></div>
-        <div class="table-footer"><span id="result-count" aria-live="polite"></span><span>값은 원본의 2026.11.02 상태를 기준으로 합니다.</span></div>
-      </section>
-      <footer><p>출처: <a href="https://docs.google.com/spreadsheets/d/1qUSwYnpDtWAD_aq_4L6dC6py2vM19WtLed2AGKSdIPk/edit?usp=sharing" target="_blank" rel="noopener noreferrer">니케 과금 패키지 효율표</a> · 확인일 2026.11.02</p><p>여기의 ‘효율’은 원본이 설정한 재화 가중치로 계산합니다. 픽업 1회 단가는 쥬얼 300개와 고급 모집권만 반영하며 일반 모집권은 합산하지 않습니다. 기간 한정 상품·쿠폰의 현재 판매 및 사용 가능 여부는 별도로 확인하세요.</p><p>비공식 팬 제작 자료이며 게임 운영사와 관련이 없습니다.</p></footer>
-    </main>
-  </div>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">N</span><span>NIKKE <strong>VALUE</strong></span></div>
+      <nav class="primary-nav" aria-label="주 메뉴">
+        <button type="button" data-page="efficiency">효율표</button>
+        <button type="button" data-page="compare">두 상품 비교 <span id="compare-count" class="nav-count" hidden></span></button>
+        <button type="button" data-page="values">재화 가치</button>
+        <button type="button" data-page="source">원본 자료</button>
+      </nav>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="다크 모드 켜기">다크 모드</button>
+    </div>
+  </header>
+  <main id="main" class="site-main">
+    <section class="hero">
+      <div><p class="eyebrow">2026-11-02 스냅샷 · 비공식 팬 자료</p><h1>니케 과금 효율표</h1><p class="hero-copy">상품명, 가격, 효율을 먼저 비교하고 필요한 재화와 원본 계산을 펼쳐 보세요.</p></div>
+      <div class="hero-meta"><span><strong id="stat-tabs">19</strong>개 공개 탭</span><span><strong id="stat-rows">2,124</strong>행</span><span><strong id="stat-cells">21,041</strong>셀</span></div>
+    </section>
+    <section id="workspace" class="workspace">
+      <div class="section-head"><div><p class="eyebrow" id="section-kicker">패키지효율</p><h2 id="section-title" tabindex="-1">자료를 불러오는 중</h2><p id="section-description"></p></div><span id="sheet-count" class="sheet-count"></span></div>
+      <div id="source-tools" class="source-tools" hidden><label>원본 탭<select id="sheet-picker" aria-label="원본 자료 탭 선택"></select></label><p>공개된 19개 탭의 값과 계산식을 원본 행·열 순서로 볼 수 있습니다.</p></div>
+      <div id="compare-panel" class="compare-panel" hidden></div>
+      <div id="value-tools"></div>
+      <div id="override-notice" class="override-notice" role="status" hidden></div>
+      <div id="toolbar" class="toolbar"><label class="search-wrap"><span>상품·구성품 검색</span><input id="search" type="search" placeholder="예: 모집 패키지" aria-label="현재 목록 검색"></label><label class="sort-wrap"><span>정렬</span><select id="sort-column" aria-label="정렬 기준"></select></label><button id="sort-direction" class="tool-button" type="button">오름차순 ↑</button><label id="hidden-wrap" class="check-wrap"><input id="show-hidden" type="checkbox" checked> 원본 접힌 행 포함</label><button id="download-csv" class="tool-button" type="button">CSV 저장</button></div>
+      <div id="category-filter" class="category-filter" hidden></div>
+      <div id="list-heading" class="list-heading"><strong id="result-count" aria-live="polite"></strong><span id="list-note">판매 여부는 확인되지 않았습니다.</span></div>
+      <details id="legend-details" class="legend-details"><summary>계산 기준과 표시 안내</summary><p id="legend" class="legend"></p></details>
+      <div id="table-area" class="table-area"><p class="loading">자료를 불러오는 중입니다…</p></div>
+      <div id="table-footer" class="table-footer">값은 원본의 2026.11.02 상태를 기준으로 합니다.</div>
+    </section>
+  </main>
+  <footer class="site-footer"><p>출처: <a href="https://docs.google.com/spreadsheets/d/1qUSwYnpDtWAD_aq_4L6dC6py2vM19WtLed2AGKSdIPk/edit?usp=sharing" target="_blank" rel="noopener noreferrer">니케 과금 패키지 효율표</a> · 확인일 2026.11.02 · 자동 갱신 없음</p><p>효율은 원본 재화 가중치로 계산합니다. 별도 픽업 단가는 쥬얼 300개와 고급 모집권만 반영합니다. 상품·쿠폰의 현재 판매나 사용 가능 여부는 확인되지 않았습니다.</p><p>비공식 팬 제작 자료이며 게임 운영사와 관련이 없습니다.</p></footer>
 </body>
 </html>
