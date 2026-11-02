@@ -49,6 +49,7 @@ a{color:var(--accent)}
 .filter-label{font-size:12px;font-weight:700;color:var(--muted);margin-right:4px}
 .category-chip{border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:99px;padding:8px 11px;min-height:36px;font-size:12px;font-weight:700;white-space:nowrap}
 .category-chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+.sale-notice{font-size:12px;line-height:1.6;color:var(--muted);padding:10px 12px;margin:12px 0;border-left:3px solid var(--accent);background:var(--soft);border-radius:0 7px 7px 0}
 .stepup-panel{margin:14px 0 18px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:var(--soft)}
 .stepup-panel h3,.stepup-product-group h3{font-size:17px;line-height:1.4;margin:0 0 6px}
 .stepup-explanation,.stepup-group-note{font-size:12px;line-height:1.6;color:var(--muted);margin:0 0 12px}

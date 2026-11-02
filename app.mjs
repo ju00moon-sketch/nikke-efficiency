@@ -143,17 +143,25 @@ function valueAt(name, row, column) {
   return cell ? workbook.value(name, cell[0]) : null;
 }
 
-const isBlank = value => value == null || value === '' || value instanceof CellError;
+const isBlank = value => value == null || value === '' || value instanceof CellError || (typeof value === 'number' && !Number.isFinite(value));
+function efficiencyNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const match = value.trim().replaceAll(',', '').match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(%)?$/);
+  if (!match) return null;
+  const number = Number(match[1]) / (match[2] ? 100 : 1);
+  return Number.isFinite(number) ? number : null;
+}
 function compareValues(a, b) {
   if (typeof a === 'number' && typeof b === 'number') return a - b;
   return String(a).localeCompare(String(b), 'ko', { numeric: true });
 }
 // Blank and error cells stay at the end in both directions.
-function sortBy(read) {
+function sortBy(read, sortDirection = direction) {
   return (a, b) => {
     const x = read(a), y = read(b);
     if (isBlank(x) || isBlank(y)) return isBlank(x) === isBlank(y) ? 0 : isBlank(x) ? 1 : -1;
-    return compareValues(x, y) * direction;
+    return compareValues(x, y) * sortDirection;
   };
 }
 
@@ -171,7 +179,10 @@ function standardRows(sheet) {
   if (!sortColumn) return rows;
   // Title and threshold rows above the data (rows 1 to 5) stay on top while sorting.
   const head = rows.filter(row => row[0] < 6);
-  const order = sortBy(row => valueAt(sheet.name, row, sortColumn));
+  const efficiencyMode = sortColumn === 'I_DESC' || sortColumn === 'I_ASC';
+  const column = efficiencyMode ? 'I' : sortColumn;
+  const order = sortBy(row => efficiencyMode ? efficiencyNumber(valueAt(sheet.name, row, column)) : valueAt(sheet.name, row, column),
+    efficiencyMode ? (sortColumn === 'I_DESC' ? -1 : 1) : direction);
   const body = rows.filter(row => row[0] >= 6).sort((a, b) => order(a, b) || a[0] - b[0]);
   return [...head, ...body];
 }
@@ -357,7 +368,8 @@ function packageCard(sheet, row, cumulativePrice = null) {
   header.className = 'package-card-head';
   const title = document.createElement('div');
   title.className = 'package-title';
-  const badges = text('div', `${number}행${folded ? ' · 원본 접힘' : ''}${tier ? ` · ${TIERS[tier]}` : ''}`, 'package-meta');
+  const saleStatus = name === '신입지휘관 출석 패키지' ? '계정별 구매 기한' : '판매기간 미확인';
+  const badges = text('div', `${number}행 · ${saleStatus}${folded ? ' · 원본 접힘' : ''}${tier ? ` · ${TIERS[tier]}` : ''}`, 'package-meta');
   title.append(badges, text('h3', name));
   header.append(title, packageMetric('효율', packageValue(sheet, row, 'I'), 'package-efficiency'));
   const metrics = document.createElement('div');
@@ -537,10 +549,12 @@ function renderComparisonPanel(sheet) {
 function renderPackageComparison(sheet) {
   const sort = $('#sort-column');
   const isStepup = category === 'step';
-  sort.replaceChildren(...(isStepup ? [['', '묶음별 STEP 순서']] : [['', '원본 순서'], ['D', '상품명'], ['F', '가격'], ['I', '효율'], ['PICKUP_COST', '픽업 1회 단가']]).map(([value, label]) => new Option(label, value)));
+  sort.replaceChildren(...(isStepup ? [['', '묶음별 STEP 순서']] : [['', '원본 순서'], ['I_DESC', '효율(%) 높은 순'], ['I_ASC', '효율(%) 낮은 순'], ['D', '상품명'], ['F', '가격'], ['PICKUP_COST', '픽업 1회 단가']]).map(([value, label]) => new Option(label, value)));
   sort.value = sortColumn;
   sort.disabled = isStepup;
-  $('#sort-direction').disabled = isStepup;
+  const fixedEfficiencySort = sortColumn === 'I_DESC' || sortColumn === 'I_ASC';
+  $('#sort-direction').disabled = isStepup || fixedEfficiencySort;
+  if (fixedEfficiencySort) $('#sort-direction').textContent = sortColumn === 'I_DESC' ? '높은 순 ↓' : '낮은 순 ↑';
   const matchesCategory = CATEGORIES.find(([key]) => key === category)?.[2] ?? CATEGORIES[0][2];
   visibleRows = standardRows(sheet).filter(row => row[0] >= 6 && typeof valueAt(sheet.name, row, 'D') === 'string' && typeof valueAt(sheet.name, row, 'F') === 'number' && matchesCategory(valueAt(sheet.name, row, 'D')));
   if (isStepup) {
@@ -703,6 +717,7 @@ function renderSheet(resetLimit = true) {
   $('#compare-panel').hidden = activePage !== 'compare';
   $('#toolbar').hidden = activePage === 'values';
   $('#category-filter').hidden = !isComparison();
+  $('#sale-notice').hidden = !isComparison();
   $('#stepup-panel').hidden = !isComparison() || category !== 'step';
   $('#list-heading').hidden = activePage === 'values';
   $('#legend-details').hidden = activePage === 'values';
