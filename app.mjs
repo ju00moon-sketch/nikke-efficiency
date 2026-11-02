@@ -5,6 +5,7 @@ import { cellFormat, formatValue, inputFor, pickupConversion, rowTier, tierAt, t
 const $ = selector => document.querySelector(selector);
 const STORAGE_KEY = 'nikke-values-v1';
 const PAGE = 150;
+const COMPARISON_PAGE = 40;
 const groups = [
   ['기준 · 모집', ['재화가치기준', '패키지효율', '픽업효율', 'AFFECTION TRAIL', '뽑기효율']],
   ['재화 · 패키지', ['코더', '스킬칩', '모듈', '유료쥬얼', '스텝업', '커스텀', '월정액', '코스튬뽑기(4주년)']],
@@ -37,8 +38,10 @@ const SETTINGS = [
 ];
 const EVENT_SORTS = [['', '원본 순서'], ['start', '시작일'], ['end', '종료일'], ['days', '기간'], ['category', '구분'], ['text', '내용']];
 
-let manifest, workbook, current = '패키지효율', search = '', sortColumn = '', direction = 1, showHidden = true, limit = PAGE;
+let manifest, workbook, current = '패키지효율', search = '', sortColumn = '', direction = 1, showHidden = true, limit = COMPARISON_PAGE, comparisonMode = true;
 let visibleRows = [];
+const openComparisonRows = new Set();
+const isComparison = () => current === '패키지효율' && comparisonMode;
 
 function text(tag, value, className = '') {
   const el = document.createElement(tag);
@@ -60,9 +63,13 @@ function saveOverrides() {
 
 function renderTabs() {
   const nav = $('#tabs');
+  const picker = $('#sheet-picker');
   nav.replaceChildren();
+  picker.replaceChildren();
   for (const [group, names] of groups) {
     nav.append(text('div', group, 'tab-group'));
+    const options = document.createElement('optgroup');
+    options.label = group;
     for (const name of names) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -71,13 +78,17 @@ function renderTabs() {
       button.append(text('span', name), text('small', sheetInfo(name).rowCount));
       button.addEventListener('click', () => chooseTab(name));
       nav.append(button);
+      options.append(new Option(name, name));
     }
+    picker.append(options);
   }
-  nav.querySelector('.active').scrollIntoView({ block: 'nearest', inline: 'center' });
+  picker.value = current;
+  if (window.matchMedia('(min-width: 861px)').matches) nav.querySelector('.active').scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 
 function chooseTab(name) {
   current = name;
+  comparisonMode = true;
   search = '';
   sortColumn = name === '이벤트일정' ? 'start' : '';
   direction = name === '이벤트일정' ? -1 : 1;
@@ -167,6 +178,8 @@ function control(sheet, cell, input, label) {
   element.setAttribute('aria-label', label);
   element.addEventListener('change', () => {
     const area = element.closest('[data-area]')?.dataset.area;
+    const card = element.closest('.package-card');
+    if (card) openComparisonRows.add(Number(card.dataset.row));
     let next = null;
     if (input.kind === 'checkbox') next = element.checked;
     else if (input.kind === 'select') next = options[Number(element.value)].value;
@@ -277,12 +290,13 @@ function legendText(sheet) {
 
 function showTable(table, unit, noun) {
   const area = $('#table-area');
+  const pageSize = isComparison() ? COMPARISON_PAGE : PAGE;
   if (visibleRows.length) {
     area.replaceChildren(table);
     if (limit < visibleRows.length) {
-      const more = text('button', `다음 ${Math.min(PAGE, visibleRows.length - limit)}${unit} 보기 ↓`, 'more-button tool-button');
+      const more = text('button', `다음 ${Math.min(pageSize, visibleRows.length - limit)}${unit} 보기 ↓`, 'more-button tool-button');
       more.type = 'button';
-      more.addEventListener('click', () => { limit += PAGE; renderSheet(false); });
+      more.addEventListener('click', () => { limit += pageSize; renderSheet(false); });
       area.append(more);
     }
   } else {
@@ -292,7 +306,92 @@ function showTable(table, unit, noun) {
   $('#result-count').textContent = `${total}${unit} 중 ${Math.min(limit, visibleRows.length).toLocaleString('ko-KR')}${unit} 표시`;
 }
 
+function packageValue(sheet, row, column) {
+  const value = valueAt(sheet.name, row, column);
+  if (value == null || value === '') return '—';
+  if (value instanceof CellError) return value.code;
+  const cell = row[2].find(item => colFromAddress(item[0]) === column);
+  return formatValue(value, PICKUP[column]?.format ?? cellFormat(sheet, cell));
+}
+
+function packageMetric(label, value, className = '') {
+  const metric = document.createElement('div');
+  metric.className = `package-metric ${className}`;
+  metric.append(text('span', label), text('strong', value));
+  return metric;
+}
+
+function packageCard(sheet, row) {
+  const [number, folded, cells] = row;
+  const byColumn = new Map(cells.map(cell => [colFromAddress(cell[0]), cell]));
+  const name = String(valueAt(sheet.name, row, 'D'));
+  const tier = rowTier(workbook, sheet, number);
+  const card = document.createElement('article');
+  card.className = 'package-card';
+  card.dataset.area = 'comparison';
+  card.dataset.row = number;
+  card.setAttribute('role', 'listitem');
+  if (tier) card.dataset.tier = tier;
+  const header = document.createElement('div');
+  header.className = 'package-card-head';
+  const title = document.createElement('div');
+  title.className = 'package-title';
+  const badges = text('div', `${number}행${folded ? ' · 원본 접힘' : ''}${tier ? ` · ${TIERS[tier]}` : ''}`, 'package-meta');
+  title.append(badges, text('h3', name));
+  header.append(title, packageMetric('효율', packageValue(sheet, row, 'I'), 'package-efficiency'));
+  const metrics = document.createElement('div');
+  metrics.className = 'package-metrics';
+  metrics.append(packageMetric('가격', packageValue(sheet, row, 'F')), packageMetric('픽업 1회 단가', packageValue(sheet, row, 'PICKUP_COST')));
+  const composition = packageValue(sheet, row, 'E');
+  if (composition !== '—') card.append(header, metrics, text('p', composition, 'package-composition'));
+  else card.append(header, metrics);
+  const details = document.createElement('details');
+  details.className = 'package-detail';
+  details.open = openComparisonRows.has(number);
+  details.append(text('summary', '구매 설정과 재화 상세'));
+  details.addEventListener('toggle', () => {
+    if (!details.isConnected) return;
+    if (details.open) openComparisonRows.add(number);
+    else openComparisonRows.delete(number);
+  });
+  const detailBody = document.createElement('div');
+  detailBody.className = 'package-detail-body';
+  for (const [column, label] of [['B', '구매 합계에 포함'], ['C', '반복 구매']]) {
+    const cell = byColumn.get(column), input = cell && inputFor(workbook, sheet, cell[0]);
+    if (!input) continue;
+    const field = document.createElement('div');
+    field.className = 'package-setting';
+    field.append(text('span', label), control(sheet, cell, input, `${name} ${label}`));
+    detailBody.append(field);
+  }
+  const detailMetrics = document.createElement('div');
+  detailMetrics.className = 'package-detail-metrics';
+  for (const [column, label] of [['G', '원본 뽑기횟수'], ['PICKUP_PULLS', '픽업 환산 횟수'], ['M', '쥬얼'], ['N', '일반 모집권'], ['O', '고급 모집권']]) {
+    if (column !== 'PICKUP_PULLS' && !byColumn.has(column)) continue;
+    detailMetrics.append(packageMetric(label, packageValue(sheet, row, column)));
+  }
+  detailBody.append(detailMetrics);
+  details.append(detailBody);
+  card.append(details);
+  return card;
+}
+
+function renderPackageComparison(sheet) {
+  const sort = $('#sort-column');
+  sort.replaceChildren(...[['', '원본 순서'], ['D', '상품명'], ['F', '가격'], ['I', '효율'], ['PICKUP_COST', '픽업 1회 단가']].map(([value, label]) => new Option(label, value)));
+  sort.value = sortColumn;
+  visibleRows = standardRows(sheet).filter(row => row[0] >= 6 && typeof valueAt(sheet.name, row, 'D') === 'string' && typeof valueAt(sheet.name, row, 'F') === 'number');
+  const list = document.createElement('div');
+  list.className = 'package-list';
+  list.setAttribute('role', 'list');
+  list.setAttribute('aria-label', '패키지 상품 비교');
+  for (const row of visibleRows.slice(0, limit)) list.append(packageCard(sheet, row));
+  showTable(list, '개', '상품');
+  $('#legend').textContent = legendText(sheet);
+}
+
 function renderStandard(sheet) {
+  if (isComparison()) return renderPackageComparison(sheet);
   const columns = columnsFor(sheet);
   const labels = new Map(columns.map(column => [column, columnLabel(sheet, column)]));
   const sort = $('#sort-column');
@@ -399,8 +498,12 @@ function renderOverrideNotice() {
 }
 
 function renderSheet(resetLimit = true) {
-  if (resetLimit) limit = PAGE;
+  if (resetLimit) limit = isComparison() ? COMPARISON_PAGE : PAGE;
   const sheet = sheetData(current), info = sheetInfo(current);
+  $('#view-switch').hidden = current !== '패키지효율';
+  $('#view-compare').setAttribute('aria-pressed', String(isComparison()));
+  $('#view-original').setAttribute('aria-pressed', String(current === '패키지효율' && !comparisonMode));
+  $('#table-area').classList.toggle('comparison-area', isComparison());
   $('#section-title').textContent = current;
   $('#section-description').textContent = descriptions[current] || '원본 공개 자료의 상품 구성과 계산 결과를 검색하고 정렬해서 볼 수 있습니다.';
   $('#section-kicker').textContent = groups.find(([, names]) => names.includes(current))[0];
@@ -457,6 +560,9 @@ async function start() {
   $('#tab-count').textContent = `${visible.length}개 탭`;
   renderTabs();
   renderSheet();
+  $('#sheet-picker').addEventListener('change', event => chooseTab(event.target.value));
+  $('#view-compare').addEventListener('click', () => { comparisonMode = true; sortColumn = ''; direction = 1; renderSheet(); });
+  $('#view-original').addEventListener('click', () => { comparisonMode = false; renderSheet(); });
   $('#search').addEventListener('input', event => { search = event.target.value.trim().toLocaleLowerCase(); renderSheet(); });
   $('#sort-column').addEventListener('change', event => { sortColumn = event.target.value; renderSheet(); });
   $('#sort-direction').addEventListener('click', () => { direction *= -1; renderSheet(); });

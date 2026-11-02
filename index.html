@@ -6,14 +6,15 @@
   <meta name="theme-color" content="#101116">
   <meta name="description" content="니케 과금 효율표 공개 자료의 독립적인 2026년 11월 2일 스냅샷. 19개 탭의 상품, 재화 가치, 이벤트와 CD-Keys를 검색하고 비교하세요.">
   <title>NIKKE 데이터 아카이브 · 과금 효율표</title>
-  <link rel="stylesheet" href="./styles.css">
-  <script type="module" src="./app.mjs"></script>
+  <link rel="stylesheet" href="./styles.css?v=readability-1">
+  <script type="module" src="./app.mjs?v=readability-1"></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="자료 탭">
       <div class="brand"><span class="brand-mark">N<span class="brand-dot">·</span></span><span>NIKKE<br><strong>DATA ARCHIVE</strong></span></div>
       <p class="sidebar-caption">독립 자료실 <span id="tab-count">19개 탭</span></p>
+      <label class="mobile-tab-picker">자료 탭 <select id="sheet-picker" aria-label="자료 탭 선택"></select></label>
       <nav id="tabs" class="tabs" aria-label="워크북 탭"></nav>
       <div class="sidebar-foot">2026.11.02 스냅샷<br>수동 확인 자료 · 자동 갱신 없음</div>
     </aside>
@@ -27,10 +28,11 @@
       </section>
       <section id="workspace" class="workspace">
         <div class="section-head"><div><div class="eyebrow" id="section-kicker">기준 · 모집</div><h2 id="section-title" tabindex="-1">자료를 불러오는 중</h2><p id="section-description"></p></div><span id="sheet-count" class="sheet-count"></span></div>
+        <div id="view-switch" class="view-switch" role="group" aria-label="표시 방식" hidden><button id="view-compare" type="button">상품 비교</button><button id="view-original" type="button">원본 표</button></div>
         <div id="value-tools"></div>
         <div id="override-notice" class="override-notice" role="status" hidden></div>
         <div class="toolbar"><label class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="현재 탭에서 검색" aria-label="현재 탭에서 검색"></label><label class="sort-wrap"><span>정렬</span><select id="sort-column" aria-label="정렬할 열"></select></label><button id="sort-direction" class="tool-button" type="button">오름차순 ↑</button><label id="hidden-wrap" class="check-wrap"><input id="show-hidden" type="checkbox" checked> 접힌 행 포함</label><button id="download-csv" class="tool-button" type="button">CSV 저장 ↓</button></div>
-        <p id="legend" class="legend"></p>
+        <details class="legend-details"><summary>계산 기준과 표시 안내</summary><p id="legend" class="legend"></p></details>
         <div id="table-area" class="table-area"><p class="loading">자료를 불러오는 중입니다…</p></div>
         <div class="table-footer"><span id="result-count" aria-live="polite"></span><span>값은 원본의 2026.11.02 상태를 기준으로 합니다.</span></div>
       </section>
