@@ -1,5 +1,7 @@
 # NIKKE 데이터 아카이브
 
+**[니케 효율표 바로가기](https://ju00moon-sketch.github.io/nikke-efficiency/)**
+
 공개 [니케 과금 패키지 효율표](https://docs.google.com/spreadsheets/d/1qUSwYnpDtWAD_aq_4L6dC6py2vM19WtLed2AGKSdIPk/edit?usp=sharing)의 **2026-11-02 스냅샷**을 GitHub Pages에서 독립적으로 볼 수 있게 만든 비공식 자료실입니다. Google Sheets 접속 없이 19개 공개 탭의 상품·쿠폰·일정 데이터를 검색하고 정렬하며, 재화 가치와 선택을 바꿔 효율을 다시 계산할 수 있습니다.
 
 ## 범위와 기준
