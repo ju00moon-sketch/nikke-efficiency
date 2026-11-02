@@ -1,70 +1,470 @@
-import { products, pickupPulls, wonPerPickup, orderByPickupCost } from './data.mjs';
+import { corrections } from './corrections.mjs';
+import { CellError, Workbook, columnNumber } from './engine.mjs';
+import { cellFormat, formatValue, inputFor, pickupConversion, rowTier, tierAt, timelineEntries } from './view-model.mjs';
 
-const won = value => `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 }).format(value)}원`;
-const number = value => new Intl.NumberFormat('ko-KR').format(value);
-const pulls = value => `${new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 }).format(value)}회`;
+const $ = selector => document.querySelector(selector);
+const STORAGE_KEY = 'nikke-values-v1';
+const PAGE = 150;
+const groups = [
+  ['기준 · 모집', ['재화가치기준', '패키지효율', '픽업효율', 'AFFECTION TRAIL', '뽑기효율']],
+  ['재화 · 패키지', ['코더', '스킬칩', '모듈', '유료쥬얼', '스텝업', '커스텀', '월정액', '코스튬뽑기(4주년)']],
+  ['상점 · 기록', ['일반상점', '고철상점', '교환상점', '주년이벤트', '이벤트일정', 'CD-Keys']]
+];
+const descriptions = {
+  '재화가치기준': '전초기지 레벨, 택틱 아카데미 효과와 재화별 가치를 바꾸면 모든 탭의 효율이 다시 계산됩니다.',
+  '패키지효율': '원본의 전체 재화 환산 효율과 별도 픽업 단가를 함께 비교합니다. 체크한 상품만 누적 합계에 들어갑니다.',
+  '픽업효율': '쥬얼과 고급 모집권을 기준으로 한 픽업 모집 비교입니다.',
+  'AFFECTION TRAIL': '구매 선택과 반복 횟수에 따른 애정의 자취 보상을 확인합니다.',
+  '뽑기효율': '일반 모집권을 포함한 전체 모집 기준 비교입니다.',
+  '커스텀': '구성품 칸에서 원본과 같은 선택지를 고르면 패키지 효율이 다시 계산됩니다.',
+  '월정액': '성장 보급상자에서 받을 품목을 고르면 30일 기준 효율이 다시 계산됩니다.',
+  '이벤트일정': '원본의 가로 타임라인을 시작일과 종료일이 있는 목록으로 펼쳤습니다.',
+  'CD-Keys': '원본에 기록된 교환 코드입니다. 현재 사용 가능 여부는 확인되지 않았습니다.'
+};
+const LABEL_IN_B = ['재화가치기준', '커스텀', '월정액', '코스튬뽑기(4주년)', '일반상점', '교환상점', 'CD-Keys'];
+const TIERS = { best: '추천', good: '가성비', off: '미선택', done: '달성' };
+const TIER_HELP = { best: '추천 효율 이상', good: '가성비 효율 이상', off: '체크 해제', done: '보상 기준 도달' };
+const PICKUP = {
+  PICKUP_PULLS: { label: '픽업 환산 횟수*', format: '#,##0.0' },
+  PICKUP_COST: { label: '픽업 1회 단가*', format: '[$₩-412]#,##0' }
+};
+const SETTINGS = [
+  ['G14', '전초기지 레벨'],
+  ['H14', '택틱 아카데미 효과: 크레디트'],
+  ['I14', '택틱 아카데미 효과: 배틀데이터셋'],
+  ['J14', '택틱 아카데미 효과: 코어더스트'],
+  ['E6', '재화가치 1당 가격(원)']
+];
+const EVENT_SORTS = [['', '원본 순서'], ['start', '시작일'], ['end', '종료일'], ['days', '기간'], ['category', '구분'], ['text', '내용']];
 
-function node(tag, className, content) {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  if (content != null) element.textContent = content;
-  return element;
+let manifest, workbook, current = '패키지효율', search = '', sortColumn = '', direction = 1, showHidden = true, limit = PAGE;
+let visibleRows = [];
+
+function text(tag, value, className = '') {
+  const el = document.createElement(tag);
+  el.textContent = value;
+  if (className) el.className = className;
+  return el;
+}
+const sheetInfo = name => manifest.sheets.find(item => item.name === name);
+const sheetData = name => workbook.sheets.get(name);
+const colFromAddress = address => address.match(/^[A-Z]+/)[0];
+const scrollBehavior = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+
+function savedOverrides() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
+}
+function saveOverrides() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(workbook.overrides))); } catch { /* private mode: edits last for this visit only */ }
 }
 
-function renderAnniversary() {
-  const container = document.querySelector('#anniversary-cards');
-  for (const product of products.filter(item => item.category === 'anniversary')) {
-    const card = node('article', 'anniversary-card');
-    const top = node('div', 'card-top');
-    top.append(node('span', 'card-tag', product.name), node('strong', 'card-price', won(product.price)));
-    const metric = node('div', 'card-metric');
-    metric.append(node('strong', '', pulls(pickupPulls(product))), node('span', '', '픽업 환산'));
-    const detail = node('p', 'card-detail', `픽업 1회당 ${won(wonPerPickup(product))} · 일반권 ${product.ordinary}장`);
-    const extras = node('p', 'card-extras', product.extras);
-    card.append(top, metric, detail, extras);
-    container.append(card);
+function renderTabs() {
+  const nav = $('#tabs');
+  nav.replaceChildren();
+  for (const [group, names] of groups) {
+    nav.append(text('div', group, 'tab-group'));
+    for (const name of names) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `tab${name === current ? ' active' : ''}`;
+      if (name === current) button.setAttribute('aria-current', 'page');
+      button.append(text('span', name), text('small', sheetInfo(name).rowCount));
+      button.addEventListener('click', () => chooseTab(name));
+      nav.append(button);
+    }
   }
+  nav.querySelector('.active').scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 
-function cell(label, content, className = '') {
-  const td = node('td', className, content);
-  td.dataset.label = label;
+function chooseTab(name) {
+  current = name;
+  search = '';
+  sortColumn = name === '이벤트일정' ? 'start' : '';
+  direction = name === '이벤트일정' ? -1 : 1;
+  $('#search').value = '';
+  renderTabs();
+  renderSheet();
+  if (window.matchMedia('(max-width: 860px)').matches) $('#workspace').scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+}
+
+function columnsFor(sheet) {
+  const columns = new Set();
+  for (const [, , cells] of sheet.rows) for (const cell of cells) columns.add(colFromAddress(cell[0]));
+  const sorted = [...columns].sort((a, b) => columnNumber(a) - columnNumber(b));
+  return sheet.name === '패키지효율' ? [...sorted, 'PICKUP_PULLS', 'PICKUP_COST'] : sorted;
+}
+
+function sourceHeader(sheet, column) {
+  const header = sheet.rows.find(row => row[0] === 5)?.[2].find(cell => colFromAddress(cell[0]) === column);
+  const label = header?.[1];
+  return label && typeof label === 'string' && label.length < 20 ? `${column} · ${label}` : column;
+}
+const columnLabel = (sheet, column) => PICKUP[column]?.label ?? sourceHeader(sheet, column);
+
+function valueAt(name, row, column) {
+  if (PICKUP[column]) {
+    if (row[0] < 6) return null;
+    const pickup = pickupConversion(workbook, row[0]);
+    return pickup && (column === 'PICKUP_PULLS' ? pickup.pulls : pickup.cost);
+  }
+  const cell = row[2].find(item => colFromAddress(item[0]) === column);
+  return cell ? workbook.value(name, cell[0]) : null;
+}
+
+const isBlank = value => value == null || value === '' || value instanceof CellError;
+function compareValues(a, b) {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a).localeCompare(String(b), 'ko', { numeric: true });
+}
+// Blank and error cells stay at the end in both directions.
+function sortBy(read) {
+  return (a, b) => {
+    const x = read(a), y = read(b);
+    if (isBlank(x) || isBlank(y)) return isBlank(x) === isBlank(y) ? 0 : isBlank(x) ? 1 : -1;
+    return compareValues(x, y) * direction;
+  };
+}
+
+function rowText(name, row) {
+  const sheet = sheetData(name);
+  return [row[0], ...row[2].map(cell => {
+    const value = workbook.value(name, cell[0]);
+    return value instanceof CellError ? value.code : `${formatValue(value, cellFormat(sheet, cell))} ${value}`;
+  })].join(' ').toLocaleLowerCase();
+}
+
+function standardRows(sheet) {
+  let rows = sheet.rows.filter(row => showHidden || !row[1]);
+  if (search) rows = rows.filter(row => rowText(sheet.name, row).includes(search));
+  if (!sortColumn) return rows;
+  // Title and threshold rows above the data (rows 1 to 5) stay on top while sorting.
+  const head = rows.filter(row => row[0] < 6);
+  const order = sortBy(row => valueAt(sheet.name, row, sortColumn));
+  const body = rows.filter(row => row[0] >= 6).sort((a, b) => order(a, b) || a[0] - b[0]);
+  return [...head, ...body];
+}
+
+function control(sheet, cell, input, label) {
+  const address = cell[0];
+  const value = workbook.value(sheet.name, address);
+  let element, options;
+  if (input.kind === 'checkbox') {
+    element = document.createElement('input');
+    element.type = 'checkbox';
+    element.checked = value === true;
+  } else if (input.kind === 'select') {
+    options = input.options.some(option => option.value === value) ? input.options : [{ value, label: formatValue(value, cellFormat(sheet, cell)) }, ...input.options];
+    element = document.createElement('select');
+    options.forEach((option, index) => element.add(new Option(option.label, String(index), false, option.value === value)));
+  } else {
+    element = document.createElement('input');
+    element.type = 'number';
+    element.step = 'any';
+    element.inputMode = 'decimal';
+    element.value = String(value);
+  }
+  element.dataset.cell = address;
+  element.setAttribute('aria-label', label);
+  element.addEventListener('change', () => {
+    const area = element.closest('[data-area]')?.dataset.area;
+    let next = null;
+    if (input.kind === 'checkbox') next = element.checked;
+    else if (input.kind === 'select') next = options[Number(element.value)].value;
+    else if (element.value.trim() !== '' && Number.isFinite(Number(element.value))) next = Number(element.value);
+    if (next !== null) {
+      workbook.set(sheet.name, address, next);
+      saveOverrides();
+    }
+    renderSheet(false);
+    document.querySelector(`[data-area="${area}"] [data-cell="${address}"]`)?.focus({ preventScroll: true });
+  });
+  if (input.kind !== 'checkbox') return element;
+  const hit = document.createElement('label');
+  hit.className = 'check-hit';
+  hit.append(element);
+  return hit;
+}
+
+function tableHeader(columns, labels) {
+  const thead = document.createElement('thead');
+  const tr = document.createElement('tr');
+  const corner = text('th', '행');
+  corner.scope = 'col';
+  tr.append(corner);
+  for (const column of columns) {
+    const th = text('th', labels.get(column));
+    th.scope = 'col';
+    th.title = PICKUP[column] ? '원본에 없는 보조 계산입니다. 표 아래 설명을 참고하세요.' : `원본 ${column}열`;
+    tr.append(th);
+  }
+  thead.append(tr);
+  return thead;
+}
+
+function renderCell(sheet, row, column, cell, rowLabel, heading, tier) {
+  const td = document.createElement('td');
+  if (column === (LABEL_IN_B.includes(sheet.name) ? 'B' : 'D')) td.classList.add('label-cell');
+  if (PICKUP[column]) {
+    const value = valueAt(sheet.name, row, column);
+    if (value != null) td.append(formatValue(value, PICKUP[column].format));
+    td.classList.add('numeric', 'derived');
+    return td;
+  }
+  if (!cell) return td;
+  const cellTier = tierAt(workbook, sheet, cell[0]);
+  if (cellTier && cellTier !== tier) td.dataset.tier = cellTier;
+  const input = inputFor(workbook, sheet, cell[0]);
+  if (input) {
+    td.classList.add('input-cell');
+    td.append(control(sheet, cell, input, `${rowLabel} ${heading}`));
+    return td;
+  }
+  const value = workbook.value(sheet.name, cell[0]);
+  if (value instanceof CellError) {
+    td.textContent = value.code;
+    td.classList.add('cell-error');
+    td.title = '바꾼 값에서는 원본 수식도 오류를 냅니다.';
+    return td;
+  }
+  td.textContent = formatValue(value, cellFormat(sheet, cell));
+  const correction = workbook.corrections.get(`${sheet.name}!${cell[0]}`);
+  if (correction) {
+    td.classList.add('corrected');
+    td.title = correction.reason;
+    td.append(text('small', '보정', 'cell-note'));
+  }
+  if (typeof value === 'number') {
+    td.classList.add('numeric');
+    if (heading.includes('효율')) td.classList.add('efficiency');
+  }
   return td;
 }
 
-function renderRows(filter) {
-  const body = document.querySelector('#products-body');
-  const visible = orderByPickupCost(products.filter(item => filter === 'all' || item.category === filter));
-  body.replaceChildren();
-  for (const product of visible) {
-    const row = document.createElement('tr');
-    const nameCell = cell('상품 / 수령 조건', '', 'name-cell');
-    nameCell.append(node('strong', '', product.name), node('small', '', product.condition));
-    const pickupCost = wonPerPickup(product);
-    row.append(
-      nameCell,
-      cell('가격', won(product.price), 'numeric'),
-      cell('쥬얼', number(product.gems), 'numeric'),
-      cell('고급권', `${product.advanced}장`, 'numeric'),
-      cell('픽업 환산', pulls(pickupPulls(product)), 'numeric emphasis'),
-      cell('픽업 1회당', pickupCost === null ? '해당 없음' : won(pickupCost), 'numeric cost'),
-      cell('일반권', `${product.ordinary}장`, 'numeric'),
-    );
-    body.append(row);
-  }
-  document.querySelector('#filter-status').textContent = `${visible.length}개 상품 표시`;
+function renderRow(sheet, row, columns, labels) {
+  const [number, folded, cells] = row;
+  const tr = document.createElement('tr');
+  const tier = rowTier(workbook, sheet, number);
+  if (tier) tr.dataset.tier = tier;
+  if (folded) tr.classList.add('folded');
+  const head = document.createElement('th');
+  head.scope = 'row';
+  head.append(text('span', number));
+  if (folded) head.append(text('small', '접힘', 'row-note'));
+  if (tier) head.append(text('small', TIERS[tier], 'row-note tier-note'));
+  tr.append(head);
+  const byColumn = new Map(cells.map(cell => [colFromAddress(cell[0]), cell]));
+  const labelCell = byColumn.get(LABEL_IN_B.includes(sheet.name) ? 'B' : 'D');
+  const labelValue = labelCell && workbook.value(sheet.name, labelCell[0]);
+  const rowLabel = typeof labelValue === 'string' ? labelValue.split('\n')[0] : `${number}행`;
+  for (const column of columns) tr.append(renderCell(sheet, row, column, byColumn.get(column), rowLabel, labels.get(column), tier));
+  return tr;
 }
 
-renderAnniversary();
-document.querySelector('#all-count').textContent = products.length;
-renderRows('all');
-for (const button of document.querySelectorAll('.filter')) {
-  button.addEventListener('click', () => {
-    for (const item of document.querySelectorAll('.filter')) {
-      const active = item === button;
-      item.classList.toggle('active', active);
-      item.setAttribute('aria-pressed', String(active));
-    }
-    renderRows(button.dataset.filter);
-  });
+function legendText(sheet) {
+  const parts = [];
+  if (sheet.name === '패키지효율') parts.push('* 픽업 환산 횟수 = 쥬얼 ÷ 300 + 고급 모집권. 일반 모집권은 따로 세며, 원본 G·H열의 뽑기 횟수와 단가에는 일반 모집권이 더해져 있습니다.');
+  const tiers = [...new Set((sheet.rules ?? []).map(rule => rule.tier))];
+  if (tiers.length) parts.push(`행 표시는 원본의 조건부 서식 규칙을 따릅니다: ${tiers.map(tier => `${TIERS[tier]}(${TIER_HELP[tier]})`).join(', ')}. 기준 효율은 표 위쪽 행에서 바꿀 수 있습니다.`);
+  if (sheet.rows.some(row => row[1])) parts.push('‘접힘’ 행은 원본에서 접혀 있던 행입니다.');
+  const reasons = new Map();
+  for (const item of workbook.corrections.values()) if (item.sheet === sheet.name) reasons.set(item.reason, [...(reasons.get(item.reason) ?? []), item.cell]);
+  for (const [reason, cells] of reasons) parts.push(`‘보정’ ${cells.join(', ')}: ${reason}`);
+  if (reasons.size) parts.push('보정한 칸도 기본값에서는 원본과 결과가 같습니다.');
+  const editable = sheet.inputs?.length || sheet.rows.some(row => row[2].some(cell => cell[3] === 'b' && !cell[2]));
+  if (!parts.length && editable) parts.push('입력칸과 체크박스로 바꾼 값은 이 브라우저에만 저장됩니다.');
+  return parts.join(' ');
 }
+
+function showTable(table, unit, noun) {
+  const area = $('#table-area');
+  if (visibleRows.length) {
+    area.replaceChildren(table);
+    if (limit < visibleRows.length) {
+      const more = text('button', `다음 ${Math.min(PAGE, visibleRows.length - limit)}${unit} 보기 ↓`, 'more-button tool-button');
+      more.type = 'button';
+      more.addEventListener('click', () => { limit += PAGE; renderSheet(false); });
+      area.append(more);
+    }
+  } else {
+    area.replaceChildren(text('p', search ? `검색어 ‘${search}’에 맞는 ${noun}이 없습니다.` : `표시할 ${noun}이 없습니다.`, 'empty-state'));
+  }
+  const total = visibleRows.length.toLocaleString('ko-KR');
+  $('#result-count').textContent = `${total}${unit} 중 ${Math.min(limit, visibleRows.length).toLocaleString('ko-KR')}${unit} 표시`;
+}
+
+function renderStandard(sheet) {
+  const columns = columnsFor(sheet);
+  const labels = new Map(columns.map(column => [column, columnLabel(sheet, column)]));
+  const sort = $('#sort-column');
+  sort.replaceChildren(new Option('원본 순서', ''), ...columns.map(column => new Option(labels.get(column), column)));
+  sort.value = sortColumn;
+  visibleRows = standardRows(sheet);
+  const table = document.createElement('table');
+  table.className = 'data-table';
+  table.dataset.area = 'table';
+  table.setAttribute('aria-label', `${sheet.name} 원본 표`);
+  table.append(tableHeader(columns, labels));
+  const tbody = document.createElement('tbody');
+  for (const row of visibleRows.slice(0, limit)) tbody.append(renderRow(sheet, row, columns, labels));
+  table.append(tbody);
+  showTable(table, '행', '행');
+  $('#legend').textContent = legendText(sheet);
+}
+
+function renderEvents(sheet) {
+  const sort = $('#sort-column');
+  sort.replaceChildren(...EVENT_SORTS.map(([value, label]) => new Option(label, value)));
+  sort.value = sortColumn;
+  visibleRows = timelineEntries(workbook, sheet)
+    .map(entry => ({ ...entry, text: formatValue(entry.value) }))
+    .filter(item => !search || `${item.start} ${item.end} ${item.category} ${item.text} ${item.address}`.toLocaleLowerCase().includes(search));
+  if (sortColumn) {
+    const order = sortBy(item => item[sortColumn]);
+    visibleRows.sort((a, b) => order(a, b) || a.start.localeCompare(b.start) || a.row - b.row);
+  }
+  const table = document.createElement('table');
+  table.className = 'data-table event-table';
+  table.setAttribute('aria-label', '이벤트 일정 목록');
+  const thead = document.createElement('thead');
+  const top = document.createElement('tr');
+  for (const label of ['시작일', '종료일', '기간', '구분', '내용', '원본 셀']) {
+    const th = text('th', label);
+    th.scope = 'col';
+    top.append(th);
+  }
+  thead.append(top);
+  table.append(thead);
+  const tbody = document.createElement('tbody');
+  for (const item of visibleRows.slice(0, limit)) {
+    const row = document.createElement('tr');
+    row.append(text('td', item.start, 'date-cell'), text('td', item.end, 'date-cell'), text('td', `${item.days}일`, 'numeric'), text('td', item.category), text('td', item.text, 'event-name'), text('td', item.address));
+    tbody.append(row);
+  }
+  table.append(tbody);
+  showTable(table, '개', '기록');
+  $('#legend').textContent = '원본의 날짜 가로축(2022.11.04~2026.12.31)에서 병합된 칸의 처음과 끝을 시작일과 종료일로 옮겼습니다. 과거와 예정 일정이 함께 들어 있는 스냅샷입니다.';
+}
+
+function valueItem(sheet, address, label) {
+  const cell = workbook.raw(sheet.name, address);
+  const input = cell && inputFor(workbook, sheet, address);
+  if (!input) return null;
+  const item = document.createElement('div');
+  item.className = 'value-item';
+  item.append(text('span', label), control(sheet, cell, input, label));
+  return item;
+}
+
+function renderValueTools() {
+  const target = $('#value-tools');
+  target.replaceChildren();
+  if (current !== '재화가치기준') return;
+  const sheet = sheetData(current);
+  const panel = document.createElement('section');
+  panel.className = 'value-panel';
+  panel.dataset.area = 'panel';
+  panel.setAttribute('aria-label', '내 기준값');
+  const settings = document.createElement('div');
+  settings.className = 'value-grid';
+  settings.append(...SETTINGS.map(([address, label]) => valueItem(sheet, address, label)).filter(Boolean));
+  const values = document.createElement('div');
+  values.className = 'value-grid';
+  for (let row = 6; row <= 72; row++) {
+    const name = workbook.value(current, `B${row}`);
+    const item = typeof name === 'string' && valueItem(sheet, `D${row}`, name);
+    if (item) values.append(item);
+  }
+  const list = document.createElement('details');
+  list.className = 'value-list';
+  list.open = window.matchMedia('(min-width: 861px)').matches;
+  list.append(text('summary', `재화별 가치 ${values.childElementCount}개`), values);
+  panel.append(text('h3', '내 기준값'), text('p', '값을 바꾸면 모든 탭의 계산에 바로 반영되고 이 브라우저에만 저장됩니다.'), settings, list);
+  target.append(panel);
+}
+
+function renderOverrideNotice() {
+  const notice = $('#override-notice');
+  const count = workbook.overrides.size;
+  notice.hidden = count === 0;
+  if (!count) return;
+  const reset = text('button', '원본 값으로 되돌리기', 'tool-button');
+  reset.type = 'button';
+  reset.addEventListener('click', () => {
+    workbook.reset();
+    saveOverrides();
+    renderSheet(false);
+    $('#section-title').focus();
+  });
+  notice.replaceChildren(text('span', `이 브라우저에서 바꾼 값 ${count}개가 계산에 반영되어 있어 원본 스냅샷과 다를 수 있습니다.`), reset);
+}
+
+function renderSheet(resetLimit = true) {
+  if (resetLimit) limit = PAGE;
+  const sheet = sheetData(current), info = sheetInfo(current);
+  $('#section-title').textContent = current;
+  $('#section-description').textContent = descriptions[current] || '원본 공개 자료의 상품 구성과 계산 결과를 검색하고 정렬해서 볼 수 있습니다.';
+  $('#section-kicker').textContent = groups.find(([, names]) => names.includes(current))[0];
+  $('#sheet-count').textContent = `${info.rowCount.toLocaleString('ko-KR')}행 · ${info.cellCount.toLocaleString('ko-KR')}셀`;
+  $('#sort-direction').textContent = direction === 1 ? '오름차순 ↑' : '내림차순 ↓';
+  $('#hidden-wrap').hidden = !info.hiddenRowCount;
+  renderOverrideNotice();
+  renderValueTools();
+  if (current === '이벤트일정') renderEvents(sheet); else renderStandard(sheet);
+}
+
+function downloadCsv() {
+  let headings, records;
+  if (current === '이벤트일정') {
+    headings = ['시작일', '종료일', '기간(일)', '구분', '내용', '원본 셀'];
+    records = visibleRows.map(item => [item.start, item.end, item.days, item.category, item.text, item.address]);
+  } else {
+    const sheet = sheetData(current);
+    const columns = columnsFor(sheet);
+    headings = ['행', ...columns.map(column => columnLabel(sheet, column))];
+    records = visibleRows.map(row => [row[0], ...columns.map(column => {
+      const value = valueAt(current, row, column);
+      return value instanceof CellError ? value.code : value ?? '';
+    })]);
+  }
+  const escape = value => `"${String(value).replaceAll('"', '""')}"`;
+  const csv = '\uFEFF' + [headings, ...records].map(row => row.map(escape).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `nikke-${current}-2026-11-02.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function start() {
+  manifest = await fetch('./snapshot/manifest.json').then(response => { if (!response.ok) throw new Error('목록을 불러올 수 없습니다.'); return response.json(); });
+  const sheets = await Promise.all(manifest.sheets.map(async info => {
+    const response = await fetch(`./snapshot/${info.file}`);
+    if (!response.ok) throw new Error(`${info.name} 자료를 불러올 수 없습니다.`);
+    return response.json();
+  }));
+  workbook = new Workbook(sheets, corrections);
+  for (const [key, value] of Object.entries(savedOverrides())) {
+    const split = key.lastIndexOf('!');
+    const name = key.slice(0, split), address = key.slice(split + 1);
+    const sheet = workbook.sheets.get(name);
+    if (sheet && inputFor(workbook, sheet, address)) workbook.set(name, address, value);
+  }
+  const visible = manifest.sheets.filter(info => info.visible);
+  $('#stat-tabs').textContent = visible.length;
+  $('#stat-rows').textContent = visible.reduce((n, item) => n + item.rowCount, 0).toLocaleString('ko-KR');
+  $('#stat-cells').textContent = visible.reduce((n, item) => n + item.sourceCellCount, 0).toLocaleString('ko-KR');
+  $('#tab-count').textContent = `${visible.length}개 탭`;
+  renderTabs();
+  renderSheet();
+  $('#search').addEventListener('input', event => { search = event.target.value.trim().toLocaleLowerCase(); renderSheet(); });
+  $('#sort-column').addEventListener('change', event => { sortColumn = event.target.value; renderSheet(); });
+  $('#sort-direction').addEventListener('click', () => { direction *= -1; renderSheet(); });
+  $('#show-hidden').addEventListener('change', event => { showHidden = event.target.checked; renderSheet(); });
+  $('#download-csv').addEventListener('click', downloadCsv);
+}
+
+start().catch(error => {
+  $('#section-title').textContent = '자료를 불러오지 못했습니다';
+  $('#table-area').replaceChildren(text('p', `${error.message} 페이지를 새로고침해 주세요.`, 'loading'));
+});
